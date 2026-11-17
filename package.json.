@@ -1,1 +1,14 @@
+{
+  "name": "jjupdate",
+  "version": "1.0.0",
+  "description": "JJSTUDIOS automatic GitHub update announcer",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1",
+    "express": "^5.1.0"
+  }
+}
 
