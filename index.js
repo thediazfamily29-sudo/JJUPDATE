@@ -1,5 +1,8 @@
+
 const express = require("express");
 const crypto = require("crypto");
+const http = require("http");
+const https = require("https");
 
 const {
   Client,
@@ -13,7 +16,7 @@ const app = express();
 const TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 const STAFF_ROLE_ID = "1557344028129890334";
 
@@ -26,16 +29,22 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-// Health checks
+// ---------------- HEALTH CHECKS ----------------
+
 app.get("/", (req, res) => {
   res.send("JJUPDATE is online.");
 });
 
 app.get("/health", (req, res) => {
-  res.json({ status: "online" });
+  res.json({
+    success: true,
+    service: "JJUPDATE",
+    discord: client.isReady() ? "online" : "connecting"
+  });
 });
 
-// Slash command
+// ---------------- SLASH COMMAND ----------------
+
 const updateCommand = new SlashCommandBuilder()
   .setName("update")
   .setDescription("Publish a JJSTUDIOS update announcement.")
@@ -60,7 +69,8 @@ const updateCommand = new SlashCommandBuilder()
       .setRequired(false)
   );
 
-// Handle slash commands
+// ---------------- INTERACTIONS ----------------
+
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName !== "update") return;
@@ -139,7 +149,8 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-// GitHub webhook
+// ---------------- GITHUB WEBHOOK ----------------
+
 app.post(
   "/github",
   express.raw({ type: "application/json" }),
@@ -242,7 +253,74 @@ app.post(
   }
 );
 
-// Start bot and register commands
+// ---------------- RENDER KEEP-ALIVE ----------------
+
+const KEEP_ALIVE_INTERVAL = 5 * 60 * 1000;
+
+function startKeepAlive() {
+  const baseUrl =
+    process.env.RENDER_EXTERNAL_URL ||
+    `http://localhost:${PORT}`;
+
+  const healthUrl =
+    baseUrl.replace(/\/+$/, "") + "/health";
+
+  const requestModule =
+    healthUrl.startsWith("https://") ? https : http;
+
+  console.log(`Keep-alive enabled: ${healthUrl}`);
+  console.log("Keep-alive interval: 5 minutes.");
+
+  setInterval(() => {
+    const request = requestModule.get(
+      healthUrl,
+      { timeout: 10000 },
+      response => {
+        let body = "";
+
+        response.on("data", chunk => {
+          body += chunk;
+        });
+
+        response.on("end", () => {
+          try {
+            const result = JSON.parse(body);
+
+            if (
+              response.statusCode === 200 &&
+              result.success === true
+            ) {
+              console.log(
+                `[KEEP-ALIVE] Health check successful — ${new Date().toLocaleTimeString()}`
+              );
+            } else {
+              console.warn(
+                `[KEEP-ALIVE] HTTP ${response.statusCode}`
+              );
+            }
+          } catch (error) {
+            console.warn(
+              "[KEEP-ALIVE] Invalid health response:",
+              error.message
+            );
+          }
+        });
+      }
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("Health check timed out."));
+    });
+
+    request.on("error", error => {
+      console.warn("[KEEP-ALIVE] Ping failed:", error.message);
+    });
+
+  }, KEEP_ALIVE_INTERVAL);
+}
+
+// ---------------- START BOT ----------------
+
 client.once("ready", async () => {
   console.log(`JJUPDATE online as ${client.user.tag}`);
 
@@ -253,9 +331,13 @@ client.once("ready", async () => {
     console.error("Command registration failed:", error);
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`JJUPDATE listening on port ${PORT}`);
+    startKeepAlive();
   });
 });
 
-client.login(TOKEN);
+client.login(TOKEN).catch(error => {
+  console.error("Discord login failed:", error);
+  process.exit(1);
+});
